@@ -1,5 +1,5 @@
 ## Shadowban Checker – Extended Fork
-An enhanced fork of Robie’s tool for detecting shadowbanned comments. This version adds several quality‑of‑life improvements that make it easier to track your own activity and understand visibility status.
+An enhanced fork of Robert Wesner's tool for detecting shadowbanned comments. This version adds several quality‑of‑life improvements that make it easier to track your own activity and understand visibility status.
 
 ✨ Features
 Shadowban detection  
