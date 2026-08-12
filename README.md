@@ -1,5 +1,5 @@
 # Shadowban Checker – Extended Fork
-An enhanced fork of Robert Wesner's tool for detecting shadowbanned comments. https://github.com/RobertWesner/YouTube-Shadow-Comment
+An enhanced fork of Robert Wesner's tool for detecting shadowbanned comments. [LINK](https://github.com/RobertWesner/YouTube-Shadow-Comment)
 This version adds several quality‑of‑life improvements that make it easier to track your own activity and understand visibility status.
 
 ## ✨ Features
