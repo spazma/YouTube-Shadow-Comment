@@ -24,6 +24,7 @@ Install as a userscript (Tampermonkey / Violentmonkey) or inject manually via th
 
 ## 📝 Notes
 ⭐ **Shadowban detection is limited to the currently active account.**
+
 ⭐ Comment highlighting works universally, regardless of login state.
 
 ![direkteinspeisung.png](readme/direkteinspeisung.png)
