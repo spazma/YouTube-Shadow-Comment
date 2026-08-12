@@ -6,13 +6,13 @@ This version adds several quality‑of‑life improvements that make it easier t
 ## ✨ Features
 Shadowban detection - Checks whether your comments are publicly visible. Detection works only for the account you are currently logged into.
 
-## ✨ Highlighting your own comments  
+## Highlighting your own comments  
 Works across all accounts. Makes your comments stand out for quick identification.
 
-## ✨ Status icon  
+## Status icon  
 Displays the current visibility state (visible / hidden / uncertain).
 
-## ✨ LocalStorage configuration  
+## LocalStorage configuration  
 All settings are stored locally and persist across sessions.
 
 ## ⚙️ Configuration
