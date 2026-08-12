@@ -1,42 +1,30 @@
-<div align="center">
-    <h1>YouTube Shadow Comment</h1>
-    <p>
-        Checks if your comments are visible to the public
-    </p>
-</div>
+Shadowban Checker – Extended Fork
+An enhanced fork of Robie’s tool for detecting shadowbanned comments. This version adds several quality‑of‑life improvements that make it easier to track your own activity and understand visibility status.
 
+✨ Features
+Shadowban detection  
+Checks whether your comments are publicly visible. Detection works only for the account you are currently logged into.
 
----
+Highlighting your own comments  
+Works across all accounts. Makes your comments stand out for quick identification.
 
-<div align="center">
-Get more YouTube scripts on <a href="https://scripts.yt"><img src="https://scripts.yt/favicon.ico" height="10"> scripts.yt</a>
-</div>
+Status icon  
+Displays the current visibility state (visible / hidden / uncertain).
 
----
+LocalStorage configuration  
+All settings are stored locally and persist across sessions.
 
-Due to automatic filters on YouTube, your comment may show up to you but be entirely invisible to the public.
+⚙️ Configuration
+Settings are saved in localStorage.
+You can toggle highlighting and other options directly through the UI — no external setup required.
 
-> **Disclaimer**:
-> 
-> This script is highly experimental and currently in beta.
-> Please report any issues you might be facing.
+📦 Installation
+Install as a userscript (Tampermonkey / Violentmonkey) or inject manually via the browser console, depending on your workflow.
 
-## Installation
+📝 Notes
+Shadowban detection is limited to the currently active account.
 
-1. Install a userscript manager. For example, [Tampermonkey](https://www.tampermonkey.net/):
-   - [Firefox](https://addons.mozilla.org/en/firefox/addon/tampermonkey/)<br>
-   - [Chrome](https://chrome.google.com/webstore/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)<br>
-   - [Edge](https://microsoftedge.microsoft.com/addons/detail/tampermonkey/iikmkjmpaadaobahmlepeloendndfphd)<br>
-   - [Opera](https://addons.opera.com/en/extensions/details/tampermonkey-beta/)<br>
-
-2. Install this userscript by clicking [this link](../../raw/main/script.user.js).
-
-
-## Usage
-
-Your comments will be automatically checked for visibility.
-If visible, they will be marked with a green background.
-Invisible comments are red.
+Comment highlighting works universally, regardless of login state.
 
 ![direkteinspeisung.png](readme/direkteinspeisung.png)
 
