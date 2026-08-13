@@ -135,15 +135,16 @@
       const muted = document.createElement('div'); muted.style.color='#bbb'; muted.style.fontSize='12px'; muted.style.marginTop='6px'; muted.textContent='One @handle per line'; panel.appendChild(muted);
       const actions = document.createElement('div'); actions.style.display='flex'; actions.style.gap='8px'; actions.style.marginTop='10px'; actions.style.justifyContent='flex-end';
       const btnRestore = document.createElement('button'); btnRestore.className='ysc-btn secondary'; btnRestore.textContent='DEFAULT';
+      const btnRetry = document.createElement('button'); btnRetry.className='ysc-btn'; btnRetry.textContent='RETRY CHECK';
       const btnClear = document.createElement('button'); btnClear.className='ysc-btn secondary'; btnClear.textContent='CLEAR CACHE';
       const btnCancel = document.createElement('button'); btnCancel.className='ysc-btn secondary'; btnCancel.textContent='CANCEL / BACK';
       const btnSave = document.createElement('button'); btnSave.className='ysc-btn'; btnSave.textContent='SAVE';
-      actions.appendChild(btnRestore); actions.appendChild(btnClear); actions.appendChild(btnCancel); actions.appendChild(btnSave);
+      actions.appendChild(btnRestore); actions.appendChild(btnRetry); actions.appendChild(btnClear); actions.appendChild(btnCancel); actions.appendChild(btnSave);
       panel.appendChild(actions);
       container.appendChild(btn); container.appendChild(panel);
       shadowRoot.appendChild(container);
 
-      banner = document.createElement('div'); banner.id='ysc-banner'; const bh=document.createElement('h4'); bh.textContent='YouTube Shadow Comment'; const bp=document.createElement('p'); bp.id='ysc-banner-msg'; bp.textContent='OK — brak problemów.'; banner.appendChild(bh); banner.appendChild(bp); shadowRoot.appendChild(banner);
+      banner = document.createElement('div'); banner.id='ysc-banner'; const bh=document.createElement('h4'); bh.textContent='YouTube Shadow Comment'; const bp=document.createElement('p'); bp.id='ysc-banner-msg'; bp.textContent='OK — no problems :)'; banner.appendChild(bh); banner.appendChild(bp); shadowRoot.appendChild(banner);
 
       // Focus-trap behavior and improved key capture (uses composedPath)
       function openPanel(){
@@ -166,16 +167,12 @@
         try { prevActive && prevActive.focus && prevActive.focus(); } catch(e){}
       }
 
-      // NEW: panelKeyCapture uses e.composedPath() so keys typed inside shadow panel are allowed
       function panelKeyCapture(e){
-        // allow modifier combos
         if (e.ctrlKey || e.metaKey || e.altKey) return;
-        // if the composedPath contains an element from our shadowRoot (panel, overlay, btn), allow the event
         const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
         if (path && path.some(node => node === panel || node === overlay || node === btn || node === shadowRoot || node === shadowHost)) {
           return;
         }
-        // Escape closes panel even if focus not in panel
         if (e.key === 'Escape') {
           e.preventDefault(); e.stopPropagation(); closePanel(); return;
         }
@@ -192,8 +189,9 @@
       overlay.addEventListener('pointerdown', ()=>{ closePanel(); });
 
       btnRestore.addEventListener('click', ()=>{ targetsList = DEFAULT_TARGETS.slice(); const taEl = shadowRoot.querySelector('#ysc-targets-ta'); if(taEl) taEl.value = targetsList.join('\n'); updateNormalizedTargetsFromList(targetsList); });
-      btnClear.addEventListener('click', ()=>{ cache.clear(); document.querySelectorAll('ytd-comment-thread-renderer').forEach(th=>{ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); }); stats = { blocked:0, failed:0, lastError: '' }; banner.style.display='none'; try{ alert('Cache wyczyszczony.'); }catch(e){} });
+      btnClear.addEventListener('click', ()=>{ cache.clear(); document.querySelectorAll('ytd-comment-thread-renderer').forEach(th=>{ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); }); stats = { blocked:0, failed:0, lastError: '' }; banner.style.display='none'; try{ alert('Cache cleared.'); }catch(e){} });
       btnCancel.addEventListener('click', ()=>{ closePanel(); });
+      btnRetry.addEventListener('click', ()=>{ retryChecks(); try{ alert('checking all comments...'); }catch(e){} });
       btnSave.addEventListener('click', ()=>{
         const taEl = shadowRoot.querySelector('#ysc-targets-ta');
         const lines = taEl ? taEl.value.split(/\r?\n/).map(l=>l.trim()).filter(Boolean) : [];
@@ -202,7 +200,7 @@
         cache.clear();
         document.querySelectorAll('ytd-comment-thread-renderer').forEach(th=>{ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); });
         closePanel();
-        try{ alert("Zapisano listę handle'ów."); }catch(e){}
+        try{ alert("LIST SAVED"); }catch(e){}
       });
 
     } catch (e) { dbg('createShadowUI error', e); }
@@ -210,7 +208,18 @@
 
   // ---------- Banner helpers ----------
   let stats = { blocked:0, failed:0, lastError: '' };
-  function renderBannerDetails(){ if(!banner) return; const bmsg = shadowRoot.getElementById ? shadowRoot.getElementById('ysc-banner-msg') : null; if(!bmsg) return; bmsg.textContent = stats.blocked>0?`Uwaga: ${stats.blocked} żądanie(ń) mogło zostać zablokowane przez filtr/adblock.`:(stats.failed>0?`Wykryto ${stats.failed} błąd(ów) sieciowych przy sprawdzaniu komentarzy.`:'OK — brak problemów.'); banner.style.display='block'; }
+  function renderBannerDetails(){ 
+    if(!banner) return; 
+    const bmsg = shadowRoot.getElementById ? shadowRoot.getElementById('ysc-banner-msg') : null; 
+    if(!bmsg) return; 
+    bmsg.textContent = stats.blocked>0
+        ? `Warning: ${stats.blocked} request(s) may have been blocked by a filter/adblock.`
+        : (stats.failed>0
+            ? `Detected ${stats.failed} network error(s) while checking comments.`
+            : 'OK — no issues.');
+    banner.style.display='block'; 
+  }
+
   function setError(kind, message){ if(kind==='blocked') stats.blocked++; else stats.failed++; stats.lastError = message?String(message):stats.lastError; renderBannerDetails(); }
 
   // ---------- Comment visibility check ----------
@@ -271,7 +280,7 @@
       }
 
       let color = '#ffeb3b', title = 'YSC: brak dopasowań';
-      if(shadowbanCount > 0){ color = '#9c27b0'; title = `YSC: Shadowban suspected: ${shadowbanCount}`; }
+      if(shadowbanCount > 0){ color = '#e53935'; title = `YSC: Shadowban suspected: ${shadowbanCount}`; }
       else if(total===0){ color='#ffeb3b'; title='YSC: brak dopasowań'; }
       else if(blockedCount>0){ color='#ff9800'; title=`YSC: ${blockedCount} zablokowane żądanie(ń)`; }
       else if(bannedCount>0){ color='#e53935'; title=`YSC: ${bannedCount} ukryte/usunięte komentarze`; }
@@ -286,8 +295,9 @@
 
       if(shadowbanCount>0 && banner){
         banner.style.display = 'block';
+        banner.style.setProperty('background', 'rgba(229, 57, 53, 0.95)', 'important');
         const bmsg = shadowRoot.getElementById && shadowRoot.getElementById('ysc-banner-msg');
-        if(bmsg) bmsg.textContent = `Shadowban suspected: ${shadowbanCount}. See window.__ysc_debugMatches() for details.`;
+        if(bmsg) bmsg.innerHTML = `<strong>Shadowban suspected!</strong><br/>→ window.__ysc_debugMatches().forEach(m => console.log(m.name, m.state, m.matched))`;
       }
     } catch(e){ dbg('safeUpdateIcon', e); }
   }
