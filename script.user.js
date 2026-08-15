@@ -65,34 +65,36 @@
   function isRecognizedAuthorHref(hrefNorm){ if(!hrefNorm) return false; return hrefNorm.startsWith('@') || hrefNorm.startsWith('channel/') || hrefNorm.startsWith('user/') || hrefNorm.startsWith('c/'); }
 
   function isTargetAuthorFromAnchor(authorAnchor){
-    // STRICT matching: rely only on href patterns
+
     if(!authorAnchor) return false;
     const href = (authorAnchor.getAttribute('href') || '').trim();
     if(!href) return false;
     const nh = normalizeHref(href);
     if(!nh) return false;
-    // @handle or path containing segment '@handle'
+  
     if(nh.startsWith('@')){
       const handle = nh.replace(/^@+/,'').toLowerCase();
       return normalizedTargets.has(handle);
     }
-    const segs = nh.split('/');
-    for(const s of segs){
-      if(s.startsWith('@')){
-        const h = s.replace(/^@+/,'').toLowerCase();
-        if(normalizedTargets.has(h)) return true;
-      }
+  
+    const segs = nh.split('/').filter(Boolean);
+    if(segs.length === 0) return false;
+  
+    const lastSeg = segs[segs.length - 1].toLowerCase();
+  
+    if(segs[0] === 'channel' && lastSeg.startsWith('uc')){
+      return normalizedTargets.has(lastSeg);
     }
-    // channel/UC...
-    if(nh.startsWith('channel/')){
-      const id = segs[segs.length-1].toLowerCase();
-      return normalizedTargets.has(id);
+  
+    if((segs[0] === 'user' || segs[0] === 'c') && segs.length >= 2){
+      return normalizedTargets.has(lastSeg);
     }
-    // user/ or c/
-    if(nh.startsWith('user/') || nh.startsWith('c/')){
-      const name = segs[segs.length-1].toLowerCase();
-      return normalizedTargets.has(name);
+  
+    if(lastSeg.startsWith('@')){
+      const handle = lastSeg.replace(/^@+/,'').toLowerCase();
+      return normalizedTargets.has(handle);
     }
+  
     return false;
   }
 
