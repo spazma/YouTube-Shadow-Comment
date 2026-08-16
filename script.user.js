@@ -20,6 +20,10 @@
   const CACHE_TTL = 15 * 60 * 1000;
   const MAX_CONCURRENT = 3;
   const STORAGE_KEY = 'ysc_targets_v1';
+  const IGNORE_INITIAL_THREADS_ON_LOAD = true;
+  const AUTO_CLEAR_CACHE_ON_LOAD = true;
+  const AUTO_CLEAR_WAIT_MS = 300;
+  const COMMENTS_WAIT_TIMEOUT = 5000;
 
   function dbg(...a){ if (DEBUG) console.log('[YSC]', ...a); }
 
@@ -29,12 +33,12 @@
       if (document.getElementById('ysc-page-styles')) return;
       const s = document.createElement('style'); s.id = 'ysc-page-styles';
       s.textContent = `
-        ytd-comment-thread-renderer[data-ysc-invisible-comment="checking"] { background-color: rgba(100,100,100,0.12) !important; }
-        ytd-comment-thread-renderer[data-ysc-invisible-comment="banned"] { background-color: rgba(255,0,0,0.12) !important; }
-        ytd-comment-thread-renderer[data-ysc-invisible-comment="valid"] { background-color: rgba(3,255,36,0.12) !important; }
-        ytd-comment-thread-renderer[data-ysc-invisible-comment="blocked"] { outline: 2px dashed orange !important; }
-        ytd-comment-thread-renderer[data-ysc-invisible-comment] ytd-comment-renderer,
-        ytd-comment-thread-renderer[data-ysc-invisible-comment] #content { background-clip: padding-box !important; }
+        /* Only style threads we explicitly marked as target (no "checking" visual) */
+        ytd-comment-thread-renderer[data-ysc-target][data-ysc-invisible-comment="banned"] { background-color: rgba(255,0,0,0.12) !important; }
+        ytd-comment-thread-renderer[data-ysc-target][data-ysc-invisible-comment="valid"] { background-color: rgba(3,255,36,0.12) !important; }
+        ytd-comment-thread-renderer[data-ysc-target][data-ysc-invisible-comment="blocked"] { outline: 2px dashed orange !important; }
+        ytd-comment-thread-renderer[data-ysc-target][data-ysc-invisible-comment] ytd-comment-renderer,
+        ytd-comment-thread-renderer[data-ysc-target][data-ysc-invisible-comment] #content { background-clip: padding-box !important; }
       `;
       document.head.appendChild(s);
     } catch (e) { console.warn('YSC: injectPageHighlightStyles failed', e); }
@@ -45,8 +49,15 @@
   function saveTargets(list){ try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch(e) { console.warn('YSC save', e); } }
   let targetsList = loadTargets();
   let normalizedTargets = new Set();
+
+  // normalize targets to lowercase alphanumeric-only strings (removes dots/underscores etc.)
   function updateNormalizedTargetsFromList(list){
-    normalizedTargets = new Set(list.map(t=> (t||'').toString().trim().replace(/^@+/,'').toLowerCase()).filter(Boolean));
+    normalizedTargets = new Set(
+      list
+        .map(t => (t||'').toString().trim().replace(/^@+/, '').toLowerCase())
+        .map(s => s.replace(/[^a-z0-9]+/g,'')) // reduce to alphanumeric
+        .filter(Boolean)
+    );
     dbg('normalizedTargets', Array.from(normalizedTargets));
   }
   updateNormalizedTargetsFromList(targetsList);
@@ -60,41 +71,51 @@
   function processQueue(){ if(concurrent >= MAX_CONCURRENT) return; const task = q.shift(); if(!task) return; concurrent++; task().finally(()=>{ concurrent--; processQueue(); }); }
 
   // ---------- Matching helpers (STRICT) ----------
-  function normalizeHref(h){ if(!h) return ''; try { const u = new URL(h, location.origin); let p = u.pathname.replace(/\/+$/,''); if(p.startsWith('/')) p = p.slice(1); return p.toLowerCase(); } catch(e) { let p = (h||'').split('?')[0].replace(/\/+$/,''); if(p.startsWith('/')) p = p.slice(1); return p.toLowerCase(); } }
+  function normalizeHref(h){
+    if(!h) return '';
+    try {
+      const u = new URL(h, location.origin);
+      let p = (u.pathname || '').replace(/\/+$/,'');
+      p = p.split(/[?#]/)[0];
+      p = p.replace(/[.]+$/,'');
+      p = p.replace(/[^a-z0-9@._-]+$/i,'');
+      if(p.startsWith('/')) p = p.slice(1);
+      return p.toLowerCase();
+    } catch(e) {
+      let p = (h||'').split(/[?#]/)[0].replace(/\/+$/,'');
+      p = p.replace(/[.]+$/,'').replace(/[^a-z0-9@._-]+$/i,'');
+      if(p.startsWith('/')) p = p.slice(1);
+      return p.toLowerCase();
+    }
+  }
+
   function lastSegment(path){ if(!path) return ''; const ps = path.split('/'); return ps[ps.length-1] || ''; }
   function isRecognizedAuthorHref(hrefNorm){ if(!hrefNorm) return false; return hrefNorm.startsWith('@') || hrefNorm.startsWith('channel/') || hrefNorm.startsWith('user/') || hrefNorm.startsWith('c/'); }
 
-  function isTargetAuthorFromAnchor(authorAnchor){
+  // normalized comparison helper (alphanumeric only)
+  const normForCompare = str => (str||'').toString().toLowerCase().replace(/^@+/,'').replace(/[^a-z0-9]+/g,'');
 
+  // match only when normalized alphanumeric last segment (or display @name) equals a target
+  function isTargetAuthorFromAnchor(authorAnchor){
     if(!authorAnchor) return false;
     const href = (authorAnchor.getAttribute('href') || '').trim();
-    if(!href) return false;
-    const nh = normalizeHref(href);
-    if(!nh) return false;
-  
-    if(nh.startsWith('@')){
-      const handle = nh.replace(/^@+/,'').toLowerCase();
-      return normalizedTargets.has(handle);
+    const displayName = (authorAnchor.textContent || '').trim().toLowerCase();
+
+    if(href){
+      const nh = normalizeHref(href);
+      if(!nh) return false;
+      if(!isRecognizedAuthorHref(nh)) return false;
+      const segs = nh.split('/').filter(Boolean);
+      if(segs.length === 0) return false;
+      const lastSeg = segs[segs.length - 1];
+      return normalizedTargets.has( normForCompare(lastSeg) );
     }
-  
-    const segs = nh.split('/').filter(Boolean);
-    if(segs.length === 0) return false;
-  
-    const lastSeg = segs[segs.length - 1].toLowerCase();
-  
-    if(segs[0] === 'channel' && lastSeg.startsWith('uc')){
-      return normalizedTargets.has(lastSeg);
+
+    // if no href, only match when displayName explicitly starts with @ and matches exactly (after normalization)
+    if(displayName && displayName.startsWith('@')){
+      return normalizedTargets.has( normForCompare(displayName) );
     }
-  
-    if((segs[0] === 'user' || segs[0] === 'c') && segs.length >= 2){
-      return normalizedTargets.has(lastSeg);
-    }
-  
-    if(lastSeg.startsWith('@')){
-      const handle = lastSeg.replace(/^@+/,'').toLowerCase();
-      return normalizedTargets.has(handle);
-    }
-  
+
     return false;
   }
 
@@ -191,7 +212,14 @@
       overlay.addEventListener('pointerdown', ()=>{ closePanel(); });
 
       btnRestore.addEventListener('click', ()=>{ targetsList = DEFAULT_TARGETS.slice(); const taEl = shadowRoot.querySelector('#ysc-targets-ta'); if(taEl) taEl.value = targetsList.join('\n'); updateNormalizedTargetsFromList(targetsList); });
-      btnClear.addEventListener('click', ()=>{ cache.clear(); document.querySelectorAll('ytd-comment-thread-renderer').forEach(th=>{ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); }); stats = { blocked:0, failed:0, lastError: '' }; banner.style.display='none'; try{ alert('Cache cleared.'); }catch(e){} });
+
+      // CLEAR CACHE -> clear cache and restart checks
+      btnClear.addEventListener('click', ()=>{
+        cache.clear();
+        try { retryChecks(); } catch(e) { dbg('retry on clear failed', e); }
+        try{ alert('Cache cleared.'); }catch(e){}
+      });
+
       btnCancel.addEventListener('click', ()=>{ closePanel(); });
       btnRetry.addEventListener('click', ()=>{ retryChecks(); try{ alert('checking all comments...'); }catch(e){} });
       btnSave.addEventListener('click', ()=>{
@@ -200,7 +228,7 @@
         const displayList = lines.map(l => l.startsWith('@')?l:'@'+l);
         targetsList = displayList; saveTargets(displayList); updateNormalizedTargetsFromList(displayList);
         cache.clear();
-        document.querySelectorAll('ytd-comment-thread-renderer').forEach(th=>{ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); });
+        document.querySelectorAll('ytd-comment-thread-renderer').forEach(th=>{ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); th.removeAttribute('data-ysc-target'); });
         closePanel();
         try{ alert("LIST SAVED"); }catch(e){}
       });
@@ -226,6 +254,7 @@
 
   // ---------- Comment visibility check ----------
   function checkCommentVisibility(commentLink, parentEl){
+    if(!parentEl || !parentEl.hasAttribute('data-ysc-target')) return; // operate only on threads we marked
     if(!commentLink){ parentEl.setAttribute('data-ysc-invisible-comment','banned'); safeUpdateIcon(); return; }
     const ck = commentLink; const cached = getCache(ck);
     if(cached){ parentEl.setAttribute('data-ysc-invisible-comment', cached); safeUpdateIcon(); dbg('cache hit', ck, cached); return; }
@@ -252,6 +281,71 @@
         setCache(ck, isBlocked ? 'blocked' : 'banned'); parentEl.setAttribute('data-ysc-invisible-comment', isBlocked ? 'blocked' : 'banned'); setError(isBlocked ? 'blocked' : 'failed', msg); safeUpdateIcon();
       }
     });
+  }
+
+  // ---------- Scrub stale highlights (single node) ----------
+  const scrubTimestamps = new WeakMap();
+  const SCRUB_THROTTLE_MS = 200;
+  function scrubThreadIfNotTarget(th){
+    try{
+      if(!th || th.nodeType !== 1) return;
+      const last = scrubTimestamps.get(th) || 0;
+      const now = Date.now();
+      if(now - last < SCRUB_THROTTLE_MS) return;
+      scrubTimestamps.set(th, now);
+      const authorAnchor = th.querySelector('#author-text[href]') || th.querySelector('#author-text a');
+      if(!authorAnchor || !isTargetAuthorFromAnchor(authorAnchor)){
+        th.removeAttribute('data-ysc-invisible-comment');
+        th.removeAttribute('data-ysc-checked');
+        th.removeAttribute('data-ysc-target');
+        dbg('scrubbed non-target thread');
+      }
+    } catch(e){ dbg('scrubThreadIfNotTarget', e); }
+  }
+
+  // full scrub for all (fallback)
+  function scrubFalseHighlights(){
+    try {
+      document.querySelectorAll('ytd-comment-thread-renderer[data-ysc-invisible-comment], ytd-comment-thread-renderer[data-ysc-target]').forEach(th => {
+        scrubThreadIfNotTarget(th);
+      });
+      safeUpdateIcon();
+      dbg('scrubFalseHighlights done');
+    } catch(e){ dbg('scrubFalseHighlights', e); }
+  }
+
+  // ---------- Mutation observer to continuously scrub injected attributes ----------
+  let scrubObserver = null;
+  function startScrubObserver(){
+    if(scrubObserver) return;
+    try{
+      scrubObserver = new MutationObserver((mutations) => {
+        for(const m of mutations){
+          if(m.type === 'attributes'){
+            const target = m.target;
+            // if attribute change happened on a comment thread or child, find top thread
+            const th = target.closest && target.closest('ytd-comment-thread-renderer');
+            if(th) scrubThreadIfNotTarget(th);
+            else if(target.matches && target.matches('ytd-comment-thread-renderer')) scrubThreadIfNotTarget(target);
+          } else if(m.type === 'childList'){
+            // new nodes added: check for any threads inside
+            m.addedNodes.forEach(n => {
+              try {
+                if(!n.querySelectorAll) return;
+                if(n.nodeType !== 1) return;
+                if(n.matches && n.matches('ytd-comment-thread-renderer')) scrubThreadIfNotTarget(n);
+                const threads = n.querySelectorAll('ytd-comment-thread-renderer');
+                threads.forEach(t => scrubThreadIfNotTarget(t));
+              } catch(e){}
+            });
+          }
+        }
+        // update icon after handling batch
+        safeUpdateIcon();
+      });
+      scrubObserver.observe(document.documentElement || document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-ysc-invisible-comment','data-ysc-checked','data-ysc-target'] });
+      dbg('scrubObserver started');
+    } catch(e){ dbg('startScrubObserver', e); }
   }
 
   // ---------- Update icon + shadowban detection ----------
@@ -321,6 +415,7 @@
     });
     console.log(out); return out;
   };
+
   window.__ysc_retryChecks = function(){ retryChecks(); };
 
   // ---------- Observers: Mutation -> Intersection ----------
@@ -339,12 +434,19 @@
     return io;
   }
 
+  // initial threads set (WeakSet of nodes present at initial load)
+  let initialThreads = new WeakSet();
+
+  // process and mark thread as target (so CSS applies only to those we mark)
   function processThreadIfNeeded(thread){
     try{
       if(thread.hasAttribute('data-ysc-checked')) return;
+      if(IGNORE_INITIAL_THREADS_ON_LOAD && initialThreads && initialThreads.has && initialThreads.has(thread)) return;
       const authorAnchor = thread.querySelector('#author-text[href]') || thread.querySelector('#author-text a');
       if(!authorAnchor) return;
       if(!isTargetAuthorFromAnchor(authorAnchor)) return;
+      // mark as target so CSS will apply
+      thread.setAttribute('data-ysc-target','1');
       thread.setAttribute('data-ysc-checked','1');
       thread.setAttribute('data-ysc-invisible-comment','checking');
       safeUpdateIcon();
@@ -365,8 +467,23 @@
           try{
             if(!n.querySelectorAll) continue;
             const threads = n.querySelectorAll('ytd-comment-thread-renderer');
-            threads.forEach(th => { try{ ensureIntersectionObserver().observe(th); }catch(e){} });
-            if(n.matches && n.matches('ytd-comment-thread-renderer')) ensureIntersectionObserver().observe(n);
+            threads.forEach(th => {
+              try{
+                // remove any stale attributes on newly added threads
+                th.removeAttribute('data-ysc-checked');
+                th.removeAttribute('data-ysc-invisible-comment');
+                th.removeAttribute('data-ysc-target');
+                ensureIntersectionObserver().observe(th);
+              }catch(e){ dbg('observe thread (mutation)', e); }
+            });
+            if(n.matches && n.matches('ytd-comment-thread-renderer')){
+              try{
+                n.removeAttribute('data-ysc-checked');
+                n.removeAttribute('data-ysc-invisible-comment');
+                n.removeAttribute('data-ysc-target');
+                ensureIntersectionObserver().observe(n);
+              }catch(e){}
+            }
           } catch(e){ dbg('mutation loop', e); }
         }
       }
@@ -377,7 +494,7 @@
   function registerExistingThreads(){
     const threads = document.querySelectorAll('ytd-comment-thread-renderer');
     const ob = ensureIntersectionObserver();
-    threads.forEach(th => { try{ ob.observe(th); } catch(e){ dbg('observe thread', e); } });
+    threads.forEach(th => { try{ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); th.removeAttribute('data-ysc-target'); ob.observe(th); } catch(e){ dbg('observe thread', e); } });
   }
 
   // debounced scroll to catch fast navigation
@@ -400,31 +517,138 @@
     }, 350);
   }
 
-  // fallback periodic update
+  // ---------- Immediate visible processing (for retry/clear) ----------
+  function processVisibleThreadsNow(){
+    try {
+      const threads = Array.from(document.querySelectorAll('ytd-comment-thread-renderer'));
+      const vhBottom = window.innerHeight || document.documentElement.clientHeight;
+      for(const th of threads){
+        try{
+          if(th.hasAttribute('data-ysc-checked')) continue;
+          const r = th.getBoundingClientRect();
+          if(r.bottom >= 0 && r.top <= vhBottom){
+            processThreadIfNeeded(th);
+            try{ io && io.unobserve && io.unobserve(th); }catch(e){}
+          }
+        } catch(e){}
+      }
+    } catch(e){ dbg('processVisibleThreadsNow', e); }
+  }
+
   setInterval(()=>{ try{ safeUpdateIcon(); } catch(e){ dbg('fallback updateIcon', e); } }, 30_000);
 
-  // retry/reset
+  // retry/reset (single canonical implementation) - now re-registers and immediately processes visible threads
   function retryChecks(){
+    initialThreads = new WeakSet();
     document.querySelectorAll('ytd-comment-thread-renderer').forEach(th=>{
-      const s = th.getAttribute('data-ysc-invisible-comment');
-      if(s==='blocked' || s==='banned' || s==='checking'){ th.removeAttribute('data-ysc-checked'); th.removeAttribute('data-ysc-invisible-comment'); const tl = th.querySelector('#published-time-text a'); if(tl?.href) cache.delete(tl.href); }
+      th.removeAttribute('data-ysc-checked');
+      th.removeAttribute('data-ysc-invisible-comment');
+      th.removeAttribute('data-ysc-target');
+      const tl = th.querySelector('#published-time-text a');
+      if(tl?.href) cache.delete(tl.href);
     });
     stats = { blocked:0, failed:0, lastError: '' };
     if(banner) banner.style.display = 'none';
+    try { registerExistingThreads(); } catch(e){ dbg('registerExistingThreads failed', e); }
+    try { setTimeout(processVisibleThreadsNow, 30); } catch(e){ processVisibleThreadsNow(); }
+    try { scrubFalseHighlights(); } catch(e){ dbg('scrubFalseHighlights failed in retryChecks', e); }
     safeUpdateIcon();
   }
 
   // cleanup cache
   setInterval(()=>{ const now = Date.now(); for(const [k,v] of cache.entries()) if(now - v.ts > CACHE_TTL) cache.delete(k); }, CACHE_TTL);
 
+  // ---------- Helper: wait for comments area then auto-clear+retry ----------
+  function waitForCommentsAndAutoClear(timeout = COMMENTS_WAIT_TIMEOUT){
+    return new Promise(resolve => {
+      let resolved = false;
+      const finish = (didFind) => {
+        if(resolved) return;
+        resolved = true;
+        try { obs && obs.disconnect(); } catch(e){}
+        resolve(didFind);
+      };
+
+      const existing = document.querySelector('ytd-comments, #comments');
+      if(existing){
+        finish(true);
+      } else {
+        const obs = new MutationObserver((mutations, o) => {
+          if(document.querySelector('ytd-comments, #comments')){
+            finish(true);
+          }
+        });
+        try { obs.observe(document.documentElement || document.body, { childList: true, subtree: true }); } catch(e){ finish(false); }
+        setTimeout(()=> finish(!!document.querySelector('ytd-comments, #comments')), timeout);
+      }
+    }).then(found => {
+      if(found){
+        setTimeout(()=> {
+          if(AUTO_CLEAR_CACHE_ON_LOAD){
+            try { cache.clear(); } catch(e){}
+          }
+          try { retryChecks(); } catch(e){ dbg('auto retryChecks failed', e); }
+          try { scrubFalseHighlights(); } catch(e){ dbg('scrubFalseHighlights failed after auto retry', e); }
+        }, AUTO_CLEAR_WAIT_MS);
+      } else {
+        dbg('comments area not found within timeout');
+      }
+    });
+  }
+
+  // ---------- SPA navigation handling ----------
+  try {
+    document.addEventListener('yt-navigate-finish', ()=> {
+      try {
+        waitForCommentsAndAutoClear().catch(e=>dbg('waitForCommentsAndAutoClear nav err',e));
+      } catch(e){ dbg('yt-navigate-finish retry failed', e); }
+    }, { passive:true });
+  } catch(e){ dbg('nav listener', e); }
+
+  // Auto-clear+retry on first user interaction after load (fallback)
+  (function setupAutoRetryOnFirstInteraction(){
+    let done = false;
+    const events = ['mousemove','pointermove','scroll','touchstart','keydown','focus'];
+    function handler(e){
+      if(done) return;
+      done = true;
+      try { cache.clear(); retryChecks(); dbg('auto clear+retry triggered by', e.type); } catch(err){ dbg('auto clear+retry failed', err); }
+      events.forEach(ev => window.removeEventListener(ev, handler, true));
+    }
+    events.forEach(ev => window.addEventListener(ev, handler, { passive: true, capture: true }));
+    setTimeout(()=>{ if(!done){ done = true; events.forEach(ev => window.removeEventListener(ev, handler, true)); dbg('auto-retry listeners removed after timeout'); } }, 10000);
+  })();
+
+  // ---------- Start scrub observer ----------
+  try { startScrubObserver(); } catch(e){ dbg('startScrubObserver failed at init', e); }
+
   // ---------- Bootstrap ----------
   try {
+    if(IGNORE_INITIAL_THREADS_ON_LOAD){
+      try {
+        initialThreads = new WeakSet();
+        document.querySelectorAll('ytd-comment-thread-renderer').forEach(th => {
+          try { initialThreads.add(th); } catch(e){}
+        });
+        dbg('initialThreads snapshot taken, count (approx):', document.querySelectorAll('ytd-comment-thread-renderer').length);
+      } catch(e){ dbg('initialThreads snapshot failed', e); initialThreads = new WeakSet(); }
+    } else {
+      initialThreads = new WeakSet();
+    }
+
     createShadowUI();
     ensureMutationObserver();
     registerExistingThreads();
+    // scrub any stale highlights left over from previous runs / page load
+    try { scrubFalseHighlights(); } catch(e){ dbg('scrubFalseHighlights failed in bootstrap', e); }
+
     window.addEventListener('scroll', debouncedScrollHandler, { passive:true });
     window.addEventListener('resize', debouncedScrollHandler, { passive:true });
+
     setTimeout(()=>{ debouncedScrollHandler(); safeUpdateIcon(); }, 1000);
+
+    try { waitForCommentsAndAutoClear().catch(e=>dbg('waitForCommentsAndAutoClear startup err',e)); } catch(e) { dbg('waitForCommentsAndAutoClear failed', e); }
+
     dbg('YSC loaded (final).');
   } catch(e){ dbg('bootstrap', e); }
 
